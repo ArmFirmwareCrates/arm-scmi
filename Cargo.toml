@@ -14,3 +14,10 @@ readme = "README.md"
 rust-version = "1.88"
 
 [dependencies]
+bitflags = "2.9.4"
+num_enum = { version = "0.7.4", default-features = false }
+paste = "1.0.15"
+safe-mmio = "0.2.5"
+thiserror = { version = "2.0.16", default-features = false }
+uuid = { version = "1.18.1", default-features = false }
+zerocopy = { version = "0.8.27", features = ["derive"] }
