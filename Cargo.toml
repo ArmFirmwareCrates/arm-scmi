@@ -4,6 +4,10 @@
 [package]
 name = "arm-scmi"
 version = "0.1.0"
+authors = [
+    "Imre Kis <imre.kis@arm.com>",
+    "Ludovic Mermod <ludovic.mermod@arm.com>"
+]
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Arm System Control and Management Interface driver"
@@ -14,3 +18,8 @@ readme = "README.md"
 rust-version = "1.88"
 
 [dependencies]
+bitflags = "2.11.0"
+num_enum = { version = "0.7.5", default-features = false }
+paste = "1.0.15"
+thiserror = { version = "2.0.18", default-features = false }
+zerocopy = { version = "0.8", features = ["derive"] }
