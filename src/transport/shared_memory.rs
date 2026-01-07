@@ -9,7 +9,7 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
     Error,
-    protocol::{Command, MessageHeader},
+    protocol::{Command, MessageHeader, StandardStatusCode, StatusCode},
     transport::Transport,
 };
 
@@ -101,15 +101,24 @@ impl<'a, const LEN: usize, D: Doorbell> SharedMemoryTransport<'a, LEN, D> {
             assert!(size_of::<R>() <= LEN);
         }
 
+        #[repr(C)]
+        struct Response<R> {
+            code: i32,
+            payload: R,
+        }
+
         // Safety: The pointer is owned by this object and points to a valid, readable memory.
         // Concurrent access between the AP and the platform is prevented by the doorbell.
-        let response = unsafe {
-            core::ptr::read_volatile(field_shared!(self.memory, payload).ptr() as *mut R)
+        let Response { code, payload } = unsafe {
+            core::ptr::read_volatile(field_shared!(self.memory, payload).ptr() as *const _)
         };
 
-        // TODO: check response status
+        let code = code.try_into()?;
+        if code != StatusCode::Standard(StandardStatusCode::Success) {
+            return Err(Error::Status(code));
+        }
 
-        Ok(response)
+        Ok(payload)
     }
 
     /// Sets the channel to busy.

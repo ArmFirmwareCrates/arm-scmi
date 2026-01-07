@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: Copyright The arm-scmi Contributors.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::protocol::{MessageId, define_command, define_protocol};
+use bitflags::bitflags;
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
+
+use crate::{
+    Error,
+    protocol::{MessageId, NotifyEnable, ProtocolId, define_command, define_protocol},
+};
 
 define_protocol!(
     Base,
@@ -22,6 +28,14 @@ define_command!(
     "BASE_DISCOVER_VENDOR",
     DiscoverVendor,
     MessageId::Base(BaseCommandMessageId::DiscoverVendor),
+    {},
+    { vendor_identifier: [u8; 16] }
+);
+
+define_command!(
+    "BASE_DISCOVER_SUB_VENDOR",
+    DiscoverSubVendor,
+    MessageId::Base(BaseCommandMessageId::DiscoverSubVendor),
     {},
     { vendor_identifier: [u8; 16] }
 );
@@ -57,7 +71,7 @@ define_command!(
     "BASE_NOTIFY_ERRORS",
     NotifyErrors,
     MessageId::Base(BaseCommandMessageId::NotifyErrors),
-    { notify_enable: u32 },
+    { notify_enable: NotifyEnable },
     { }
 );
 
@@ -68,10 +82,19 @@ define_command!(
     {
         agent_id: u32,
         device_id: u32,
-        flags: u32,
+        flags: SetPermissionFlags,
     },
     { }
 );
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromBytes, IntoBytes, Immutable, KnownLayout)]
+#[repr(transparent)]
+pub struct SetPermissionFlags(u32);
+bitflags! {
+    impl SetPermissionFlags: u32 {
+        const ALLOW = 1 << 0;
+    }
+}
 
 define_command!(
     "BASE_SET_PROTOCOL_PERMISSIONS",
@@ -80,11 +103,25 @@ define_command!(
     {
         agent_id: u32,
         device_id: u32,
-        command_id: u32, // TODO:
-        flags: u32,
+        command_id: SetProtocolPermissionsCommand,
+        flags: SetPermissionFlags,
     },
     { }
 );
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromBytes, IntoBytes, Immutable, KnownLayout)]
+#[repr(transparent)]
+pub struct SetProtocolPermissionsCommand(u32);
+
+impl SetProtocolPermissionsCommand {
+    pub fn new(protocol: ProtocolId) -> Self {
+        Self(u8::from(protocol) as u32)
+    }
+
+    pub fn protocol_id(&self) -> Result<ProtocolId, Error> {
+        (self.0 as u8).try_into()
+    }
+}
 
 define_command!(
     "BASE_RESET_AGENT_CONFIGURATION",
@@ -92,7 +129,16 @@ define_command!(
     MessageId::Base(BaseCommandMessageId::ResetAgentConfiguration),
     {
         agent_id: u32,
-        flags: u32,
+        flags: ResetAgentConfigurationFlags,
     },
     { }
 );
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromBytes, IntoBytes, Immutable, KnownLayout)]
+#[repr(transparent)]
+pub struct ResetAgentConfigurationFlags(u32);
+bitflags! {
+    impl ResetAgentConfigurationFlags: u32 {
+        const CLEAR = 1 << 0;
+    }
+}

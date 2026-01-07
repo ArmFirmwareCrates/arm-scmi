@@ -12,7 +12,9 @@ use crate::{
         system_power::SystemPowerCommandMessageId,
     },
 };
+use bitflags::bitflags;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 /// Standard protocol identifers.
 ///
@@ -386,5 +388,14 @@ impl From<StatusCode> for i32 {
                 code
             }
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromBytes, IntoBytes, Immutable, KnownLayout)]
+#[repr(transparent)]
+pub struct NotifyEnable(u32);
+bitflags! {
+    impl NotifyEnable: u32 {
+        const ENABLE = 1 << 0;
     }
 }

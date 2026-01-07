@@ -11,6 +11,8 @@ pub mod transport;
 
 use thiserror::Error;
 
+use crate::protocol::StatusCode;
+
 /// Rich error types returned by this module.
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
 pub enum Error {
@@ -22,4 +24,8 @@ pub enum Error {
     InvalidMessageId(u8),
     #[error("Invalid status code {0}")]
     InvalidStatusCode(i32),
+    #[error("Invalid system state {0}")]
+    InvalidSystemState(u32),
+    #[error("Status code {0:?}")]
+    Status(StatusCode),
 }
