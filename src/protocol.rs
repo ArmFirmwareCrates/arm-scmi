@@ -3,8 +3,13 @@
 
 /// Base protocol implementation.
 pub mod base;
+/// Power Domain Management protocol implementation.
+pub mod power_domain;
 
-use crate::{Error, protocol::base::BaseCommandMessageId};
+use crate::{
+    Error,
+    protocol::{base::BaseCommandMessageId, power_domain::PowerDomainCommandMessageId},
+};
 use bitflags::bitflags;
 use core::fmt::Debug;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
@@ -290,6 +295,7 @@ pub use define_command;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MessageId {
     Base(BaseCommandMessageId),
+    PowerDomainManagement(PowerDomainCommandMessageId),
     VendorSpecific(VendorSpecificProtocolId, u8),
 }
 
@@ -300,6 +306,9 @@ impl TryFrom<(ProtocolId, u8)> for MessageId {
         Ok(match value.0 {
             ProtocolId::Standard(protocol) => match protocol {
                 StandardProtocolId::Base => Self::Base(BaseCommandMessageId::try_from(value.1)?),
+                StandardProtocolId::PowerDomainManagement => {
+                    Self::PowerDomainManagement(PowerDomainCommandMessageId::try_from(value.1)?)
+                }
                 _ => return Err(Error::ProtocolNotSupported),
             },
             ProtocolId::VendorSpecific(protocol_id) => Self::VendorSpecific(protocol_id, value.1),
@@ -314,7 +323,10 @@ impl From<MessageId> for (ProtocolId, u8) {
                 ProtocolId::Standard(StandardProtocolId::Base),
                 message_id.into(),
             ),
-
+            MessageId::PowerDomainManagement(message_id) => (
+                ProtocolId::Standard(StandardProtocolId::PowerDomainManagement),
+                message_id.into(),
+            ),
             MessageId::VendorSpecific(protocol_id, message_id) => {
                 (ProtocolId::VendorSpecific(protocol_id), message_id)
             }
@@ -561,6 +573,35 @@ mod tests {
 
         assert!(
             MessageId::try_from((ProtocolId::Standard(StandardProtocolId::Base), 0xff)).is_err()
+        );
+
+        // PowerDomainManagement
+        assert_eq!(
+            (
+                ProtocolId::Standard(StandardProtocolId::PowerDomainManagement),
+                0x01
+            ),
+            MessageId::PowerDomainManagement(PowerDomainCommandMessageId::ProtocolAttributes)
+                .into()
+        );
+
+        assert_eq!(
+            Ok(MessageId::PowerDomainManagement(
+                PowerDomainCommandMessageId::ProtocolAttributes
+            )),
+            (
+                ProtocolId::Standard(StandardProtocolId::PowerDomainManagement),
+                0x01
+            )
+                .try_into()
+        );
+
+        assert!(
+            MessageId::try_from((
+                ProtocolId::Standard(StandardProtocolId::PowerDomainManagement),
+                0xff
+            ))
+            .is_err()
         );
 
         // Vendor Specific
