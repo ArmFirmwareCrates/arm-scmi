@@ -16,7 +16,7 @@ pub mod transport;
 
 use crate::{
     protocol::{
-        NotifyEnable, ProtocolId, StandardProtocolId, StatusCode, Version,
+        MessageId, NotifyEnable, ProtocolId, StandardProtocolId, StatusCode, Version,
         base::{
             self, BaseCommandMessageId, BaseDiscoverAgent, BaseDiscoverAgentResponse,
             BaseDiscoverImplementationVersion, BaseDiscoverListProtocol,
@@ -59,6 +59,18 @@ pub enum Error {
     InvalidSystemState(u32),
     #[error("Protocol not supported")]
     ProtocolNotSupported,
+    #[error("Channel communication error")]
+    ChannelError,
+    #[error("Length overflow")]
+    LengthOverflow,
+    #[error("Payload exceeds maximum size")]
+    PayloadExceedsMaxSize,
+    #[error("Response too short")]
+    ResponseTooShort,
+    #[error("Unexpected response {0:?}")]
+    UnexpectedResponse(MessageId),
+    #[error("Unexpected token {0:?}")]
+    UnexpectedToken(u16),
 }
 
 /// SCMI agent.
