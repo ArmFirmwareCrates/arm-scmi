@@ -5,10 +5,15 @@
 pub mod base;
 /// Power Domain Management protocol implementation.
 pub mod power_domain;
+/// System Power Management protocol implementation.
+pub mod system_power;
 
 use crate::{
     Error,
-    protocol::{base::BaseCommandMessageId, power_domain::PowerDomainCommandMessageId},
+    protocol::{
+        base::BaseCommandMessageId, power_domain::PowerDomainCommandMessageId,
+        system_power::SystemPowerCommandMessageId,
+    },
 };
 use bitflags::bitflags;
 use core::fmt::Debug;
@@ -296,6 +301,7 @@ pub use define_command;
 pub enum MessageId {
     Base(BaseCommandMessageId),
     PowerDomainManagement(PowerDomainCommandMessageId),
+    SystemPowerManagement(SystemPowerCommandMessageId),
     VendorSpecific(VendorSpecificProtocolId, u8),
 }
 
@@ -308,6 +314,9 @@ impl TryFrom<(ProtocolId, u8)> for MessageId {
                 StandardProtocolId::Base => Self::Base(BaseCommandMessageId::try_from(value.1)?),
                 StandardProtocolId::PowerDomainManagement => {
                     Self::PowerDomainManagement(PowerDomainCommandMessageId::try_from(value.1)?)
+                }
+                StandardProtocolId::SystemPowerManagement => {
+                    Self::SystemPowerManagement(SystemPowerCommandMessageId::try_from(value.1)?)
                 }
                 _ => return Err(Error::ProtocolNotSupported),
             },
@@ -325,6 +334,10 @@ impl From<MessageId> for (ProtocolId, u8) {
             ),
             MessageId::PowerDomainManagement(message_id) => (
                 ProtocolId::Standard(StandardProtocolId::PowerDomainManagement),
+                message_id.into(),
+            ),
+            MessageId::SystemPowerManagement(message_id) => (
+                ProtocolId::Standard(StandardProtocolId::SystemPowerManagement),
                 message_id.into(),
             ),
             MessageId::VendorSpecific(protocol_id, message_id) => {
@@ -599,6 +612,35 @@ mod tests {
         assert!(
             MessageId::try_from((
                 ProtocolId::Standard(StandardProtocolId::PowerDomainManagement),
+                0xff
+            ))
+            .is_err()
+        );
+
+        // SystemPowerManagement
+        assert_eq!(
+            (
+                ProtocolId::Standard(StandardProtocolId::SystemPowerManagement),
+                0x01
+            ),
+            MessageId::SystemPowerManagement(SystemPowerCommandMessageId::ProtocolAttributes)
+                .into()
+        );
+
+        assert_eq!(
+            Ok(MessageId::SystemPowerManagement(
+                SystemPowerCommandMessageId::ProtocolAttributes
+            )),
+            (
+                ProtocolId::Standard(StandardProtocolId::SystemPowerManagement),
+                0x01
+            )
+                .try_into()
+        );
+
+        assert!(
+            MessageId::try_from((
+                ProtocolId::Standard(StandardProtocolId::SystemPowerManagement),
                 0xff
             ))
             .is_err()
