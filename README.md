@@ -1,12 +1,31 @@
-# Arm System Control and Management Interface driver
+# Arm System Control and Management Interface library
 
-Driver implementation for the [Arm System Control and Management Interface](https://developer.arm.com/documentation/den0056/f/).
+This library provides support for the
+[Arm System Control and Management Interface](https://developer.arm.com/documentation/den0056/fb/)
+(SCMI). The implementation is based on version 4.0 beta 0, and all section references correspond to
+this version.
+
+The crate includes primitives for defining protocols and implements several standard protocols. It
+defines all required command, response, and miscellaneous types. In addition, it offers a high-level
+interface for SCMI calls, built on top of an abstract Transport layer. The library also includes
+implementations of transport layers.
+
 
 ## Implemented features
 
-## Feature flags
+* Protocols
+  * Base
+  * Power Domain Management
+  * System Power Management
+* Transport layers
+  * Shared memory based transport
 
 ## Future plans
+
+* Implement further protocols
+* Add further transport layers
+* Add support for asynchronous calls
+* Add support for notifications
 
 ## License
 
