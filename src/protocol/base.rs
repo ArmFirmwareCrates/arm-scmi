@@ -4,12 +4,12 @@
 use crate::{
     Error,
     protocol::{
-        MessageId, NotifyEnable, ProtocolId, StandardProtocolId, define_command, define_protocol,
-        get_ascii_string,
+        MessageId, NotifyEnable, ProtocolId, Response, StandardProtocolId, define_command,
+        define_protocol, get_ascii_string,
     },
 };
 use bitflags::bitflags;
-use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, transmute_ref};
+use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout, transmute_ref};
 
 /// Base protocol attributes.
 #[derive(
@@ -168,13 +168,26 @@ define_command!(
     { implementation_version: u32 }
 );
 
-define_command!(
-    "BASE_DISCOVER_LIST_PROTOCOLS",
-    BaseDiscoverListProtocol,
-    MessageId::Base(BaseCommandMessageId::DiscoverListProtocols),
-    { skip: u32 },
-    { num_protocols: u32, protocols: [u32; Self::MAX_PROTOCOL_WORDS] }
-);
+/// `BASE_DISCOVER_LIST_PROTOCOLS` command.
+#[derive(Clone, Debug, PartialEq, Eq, FromBytes, Immutable, IntoBytes, KnownLayout)]
+#[repr(C, align(4))]
+pub struct BaseDiscoverListProtocol {
+    pub skip: u32,
+}
+
+impl crate::protocol::Command for BaseDiscoverListProtocol {
+    const ID: crate::protocol::MessageId =
+        (MessageId::Base(BaseCommandMessageId::DiscoverListProtocols));
+    type Response = BaseDiscoverListProtocolResponse;
+}
+
+/// `BASE_DISCOVER_LIST_PROTOCOLS` command response.
+#[derive(Clone, Debug, PartialEq, Eq, FromBytes, Immutable, IntoBytes, KnownLayout)]
+#[repr(C, align(4))]
+pub struct BaseDiscoverListProtocolResponse {
+    pub(crate) num_protocols: u32,
+    pub(crate) protocols: [u32; Self::MAX_PROTOCOL_WORDS],
+}
 
 impl BaseDiscoverListProtocolResponse {
     /// This is an arbitrary limitation to keep the type reasonably small compared to its maximal
@@ -196,6 +209,52 @@ impl BaseDiscoverListProtocolResponse {
     /// Returns true if a protocol is included in the list.
     pub fn contains_protocol(&self, protocol_id: ProtocolId) -> bool {
         self.iter().any(|protocol| protocol == Ok(protocol_id))
+    }
+}
+
+impl Response for BaseDiscoverListProtocolResponse {
+    /// `BASE_DISCOVER_LIST_PROTOCOLS` is a dynamically sized response type. The length of the
+    /// `protocols` field depends on the value of the `num_protocols` field.
+    fn from_reader<F: Fn(&mut [u8]) -> usize>(f: F) -> Result<Self, Error> {
+        let mut instance = Self::new_zeroed();
+
+        let data_length = f(instance.as_mut_bytes());
+
+        // Check if num_protocols field is valid.
+        if data_length < size_of::<u32>() {
+            return Err(Error::ResponseTooShort);
+        }
+
+        if instance.num_protocols as usize > Self::MAX_PROTOCOL_COUNT {
+            return Err(Error::PayloadExceedsMaxSize);
+        }
+
+        let Some(expected_length) = (instance.num_protocols as usize)
+            .next_multiple_of(size_of::<u32>())
+            .checked_add(size_of::<u32>())
+        else {
+            return Err(Error::LengthOverflow);
+        };
+
+        if data_length != expected_length {
+            return Err(Error::ResponseTooShort);
+        }
+
+        Ok(instance)
+    }
+
+    /// Creates a variable length slice based on the `num_protocols` field's value.
+    fn as_bytes(&self) -> Result<&[u8], Error> {
+        let Some(data_length) = (self.num_protocols as usize)
+            .next_multiple_of(size_of::<u32>())
+            .checked_add(size_of::<u32>())
+        else {
+            return Err(Error::LengthOverflow);
+        };
+
+        let bytes = <Self as IntoBytes>::as_bytes(self);
+
+        Ok(&bytes[0..data_length])
     }
 }
 
@@ -330,6 +389,21 @@ mod tests {
 
         response.vendor_identifier[..6].copy_from_slice(b"Hello\0");
         assert_eq!(response.vendor_identifier(), Some("Hello"));
+    }
+
+    #[test]
+    fn protocol_list() {
+        assert!(BaseDiscoverListProtocolResponse::from_reader(|_| 1).is_err());
+        assert!(BaseDiscoverListProtocolResponse::from_reader(|_| 5).is_err());
+        assert!(BaseDiscoverListProtocolResponse::from_reader(|_| 1000).is_err());
+
+        let result = BaseDiscoverListProtocolResponse::from_reader(|buffer| {
+            buffer[0..8].copy_from_slice(&[0x01, 0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x00]);
+            8
+        })
+        .unwrap();
+
+        assert!(Response::as_bytes(&result).is_ok());
     }
 
     #[test]
