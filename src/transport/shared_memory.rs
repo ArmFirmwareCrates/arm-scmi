@@ -111,9 +111,9 @@ impl SharedMemory {
     ///
     /// # Safety
     ///
-    /// `memory` must be a valid and unique pointer to a SCMI shared memory region. It must be at
-    /// least 4 byte aligned and mapped as device memory. The shared memory must be at least
-    /// 24 bytes + [maximal expected payload length] long.
+    /// `memory` must be a valid and unique pointer to a SCMI shared memory region that is
+    /// accessible from all cores/threads. It must be at least 4 byte aligned and mapped as device
+    /// memory. The shared memory must be at least 24 bytes + [maximal expected payload length] long.
     pub unsafe fn new(memory: NonNull<u32>, size: usize) -> Self {
         const HEADER_SIZE: usize = size_of::<SharedMemoryHeader>();
         // The payload should be at least one word long.
@@ -238,6 +238,9 @@ impl SharedMemory {
         self.payload.len() * size_of::<u32>()
     }
 }
+
+// Safety: SharedMemory::new promises the memory to be accessible from all cores.
+unsafe impl Send for SharedMemory {}
 
 /// `OwnedChannel` is only constructed if the channel is free, making accesses to the shared memory
 /// safe.
