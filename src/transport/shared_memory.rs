@@ -3,9 +3,7 @@
 
 use crate::{
     Error,
-    protocol::{
-        Command, MessageHeader, MessageId, ResponseWithStatus, StandardStatusCode, StatusCode,
-    },
+    protocol::{Command, MessageHeader, MessageId, Response, StandardStatusCode, StatusCode},
     transport::Transport,
 };
 use bitflags::bitflags;
@@ -197,22 +195,41 @@ impl SharedMemory {
         }
     }
 
-    /// Reads the payload from the shared memory and interprets it as `T`.
+    /// Reads the response status from beginning of the payload in the shared memory.
     ///
     /// # Safety
     ///
     /// The caller must guarantee that it owns the shared memory, i.e. the channel is 'free'.
-    pub unsafe fn payload<T>(&self) -> T {
-        const {
-            assert!(align_of::<T>() <= 4);
-        };
-        assert!(size_of::<T>() <= self.max_payload_length());
+    pub unsafe fn status(&self) -> Result<StatusCode, Error> {
+        assert!(size_of::<i32>() <= self.max_payload_length());
 
-        let ptr = self.payload.cast::<T>();
+        let ptr = self.payload.cast::<i32>();
 
         // Safety: Self::new promises that self.payload points to valid, aligned shared memory,
-        // and the caller ensures the payload is initialized as a `T`.
-        unsafe { ptr.read_volatile() }
+        // and the caller ensures that there are no concurrent writes to the memory.
+        let raw_status = unsafe { ptr.read_volatile() };
+
+        raw_status.try_into()
+    }
+
+    /// Reads the payload from the shared memory into a byte slice. It does not include the status
+    /// field, use [Self::status()] for reading the response status code.
+    ///
+    /// # Safety
+    ///
+    /// The caller must guarantee that it owns the shared memory, i.e. the channel is 'free'.
+    pub unsafe fn read_payload(&self, payload: &mut [u8]) {
+        assert!(payload.len().is_multiple_of(4));
+        assert!(size_of::<i32>() + payload.len() <= self.max_payload_length());
+
+        // Safety: The computed offset does not overflow and the assert in the previous line
+        // guarantees that the address is within the boundaries of the shared memory.
+        let ptr = unsafe { self.payload.cast::<u8>().add(size_of::<i32>()) };
+        for (i, b) in payload.iter_mut().enumerate() {
+            // Safety: Self::new promises that self.payload points to valid, aligned shared memory,
+            // and the caller ensures that there are no concurrent writes to the memory
+            *b = unsafe { ptr.add(i).read_volatile() };
+        }
     }
 
     /// Writes the payload into the shared memory.
@@ -301,9 +318,7 @@ impl<'a> OwnedChannel<'a> {
             .checked_sub(size_of::<u32>() as u32)
             .ok_or(Error::LengthOverflow)?;
 
-        if length as usize > self.memory.max_payload_length()
-            || (length as usize) != size_of::<ResponseWithStatus<C::Response>>()
-        {
+        if length as usize > self.memory.max_payload_length() {
             return Err(Error::PayloadExceedsMaxSize);
         }
 
@@ -316,15 +331,29 @@ impl<'a> OwnedChannel<'a> {
             return Err(Error::UnexpectedToken(msg_header.token));
         }
 
-        // Safety: Self::new guarantees that the channel is owned by the caller.
-        let response = unsafe { self.memory.payload::<ResponseWithStatus<C::Response>>() };
+        // Check if status fits into the response.
+        if (length as usize) < size_of::<i32>() {
+            return Err(Error::ResponseTooShort);
+        }
 
-        let status = response.status()?;
+        // Safety: Self::new guarantees that the channel is owned by the caller.
+        let status = unsafe { self.memory.status()? };
         if status != StatusCode::Standard(StandardStatusCode::Success) {
             return Err(Error::Status(status));
         }
 
-        Ok(response.payload)
+        let available_payload_length = length as usize - size_of::<i32>();
+
+        C::Response::from_reader(|buffer| {
+            // Only read up to the end of the available data. The response specific from_reader will
+            // decide whether it is enough data to construct the response.
+            let read_length = available_payload_length.min(buffer.len());
+
+            // Safety: Self::new guarantees that the channel is owned by the caller.
+            unsafe { self.memory.read_payload(&mut buffer[..read_length]) };
+
+            available_payload_length
+        })
     }
 
     /// Checks if there was a channel error.
@@ -387,7 +416,9 @@ impl<D: Doorbell> Transport for SharedMemoryTransport<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{VendorSpecificProtocolId, Version, base, system_power};
+    use crate::protocol::{
+        FixedSizedResponse, VendorSpecificProtocolId, Version, base, system_power,
+    };
 
     struct HookDoorbell<'a, F: FnMut(&mut [u32])> {
         hook: F,
@@ -477,17 +508,36 @@ mod tests {
             buffer: [u32; 32],
         }
 
+        #[derive(Clone, Debug, PartialEq, Eq, FromBytes, IntoBytes, Immutable)]
+        struct EmptyResponse {}
+
+        impl FixedSizedResponse for EmptyResponse {}
+
         impl Command for LongCommand {
             const ID: MessageId =
                 MessageId::VendorSpecific(VendorSpecificProtocolId::new(0xfc), 0xba);
 
-            type Response = ();
+            type Response = EmptyResponse;
         }
 
         let mut transport = harness.create_transport(|_buffer| {});
         assert_eq!(
             Err(Error::PayloadExceedsMaxSize),
             transport.invoke_command(LongCommand { buffer: [0; 32] })
+        );
+    }
+
+    #[test]
+    fn response_too_short() {
+        let mut harness = Harness::new();
+
+        let mut transport = harness.create_transport(|buffer| {
+            buffer[Harness::CHANNEL_STATUS_OFFSET] = 0x1;
+            buffer[Harness::LENGTH_OFFSET] = 0x5;
+        });
+        assert_eq!(
+            Err(Error::ResponseTooShort),
+            transport.invoke_command(base::ProtocolVersion {})
         );
     }
 
@@ -501,6 +551,22 @@ mod tests {
         });
         assert_eq!(
             Err(Error::PayloadExceedsMaxSize),
+            transport.invoke_command(base::ProtocolVersion {})
+        );
+    }
+
+    #[test]
+    fn response_length_not_matching() {
+        let mut harness = Harness::new();
+
+        let mut transport = harness.create_transport(|buffer| {
+            buffer[Harness::CHANNEL_STATUS_OFFSET] = 0x1;
+            buffer[Harness::LENGTH_OFFSET] = 0x10;
+            buffer[Harness::MSG_PAYLOAD_OFFSET] = 0;
+            buffer[Harness::MSG_PAYLOAD_OFFSET + 1] = 0x1234_5678;
+        });
+        assert_eq!(
+            Err(Error::ResponseTooShort),
             transport.invoke_command(base::ProtocolVersion {})
         );
     }
@@ -559,9 +625,8 @@ mod tests {
 
         let mut transport = harness.create_transport(|buffer| {
             buffer[Harness::CHANNEL_STATUS_OFFSET] = 0x1;
-            buffer[Harness::LENGTH_OFFSET] = 0xc;
+            buffer[Harness::LENGTH_OFFSET] = 0x8;
             buffer[Harness::MSG_PAYLOAD_OFFSET] = 0xffff_ffff;
-            buffer[Harness::MSG_PAYLOAD_OFFSET + 1] = 0x1234_5678;
         });
         assert_eq!(
             Err(Error::Status(StatusCode::Standard(

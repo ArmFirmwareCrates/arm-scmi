@@ -18,7 +18,7 @@ use crate::{
 use bitflags::bitflags;
 use core::fmt::Debug;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
-use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
+use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout};
 
 /// Standard protocol identifiers.
 ///
@@ -188,7 +188,43 @@ impl<R> ResponseWithStatus<R> {
 /// Command trait for connecting command structures with their message IDs and response types.
 pub trait Command: Debug + FromBytes + IntoBytes + Immutable {
     const ID: MessageId;
-    type Response: Debug + FromBytes + IntoBytes + Immutable;
+    type Response: Response;
+}
+
+/// Command response trait.
+pub trait Response: Debug + Sized {
+    /// Creates a new instance by calling a function that reads data from the communication channel.
+    /// `f` must return the length of total available payload data.
+    fn from_reader<F: Fn(&mut [u8]) -> usize>(f: F) -> Result<Self, Error>;
+
+    /// Returns a byte slice representation of the response instance.
+    fn as_bytes(&self) -> Result<&[u8], Error>;
+}
+
+/// Trait for marking types as command response types with fixed sizes. It automatically implements
+/// the response trait using zerocopy and mandating the expected response size.
+pub trait FixedSizedResponse: Debug + FromBytes + FromZeros + IntoBytes + Immutable {}
+
+impl<T: FixedSizedResponse> Response for T {
+    fn from_reader<F: Fn(&mut [u8]) -> usize>(f: F) -> Result<Self, Error> {
+        const {
+            assert!(size_of::<Self>().is_multiple_of(4));
+        }
+
+        let mut instance = Self::new_zeroed();
+
+        // The response length must match the size of the response type.
+        let total_length = f(instance.as_mut_bytes());
+        if total_length != size_of_val(&instance) {
+            return Err(Error::ResponseTooShort);
+        }
+
+        Ok(instance)
+    }
+
+    fn as_bytes(&self) -> Result<&[u8], Error> {
+        Ok(<Self as IntoBytes>::as_bytes(self))
+    }
 }
 
 /// The macro defines the common components on an SCMI protocol implementation. This includes
@@ -254,7 +290,7 @@ pub use define_protocol;
 /// Defines SCMI command and response structures.
 ///
 /// The macro defines two structs for the command and its response. It also implements the `Command`
-/// trait for the defined command structure.
+/// trait for the defined command structure and `FixedSizedResponse` for the response structure.
 ///
 /// Arguments:
 /// * name: Name of the command as written in the specification
@@ -289,6 +325,8 @@ macro_rules! define_command {
             pub struct [<$command Response>] {
                 $(pub $r_field: $r_type),*
             }
+
+            impl $crate::protocol::FixedSizedResponse for [<$command Response>] {}
         }
     };
 }

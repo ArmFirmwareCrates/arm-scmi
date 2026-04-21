@@ -486,7 +486,7 @@ impl<'a, T: Transport> ScmiSystemPowerManagement<'a, T> {
 mod tests {
     use super::*;
     use crate::protocol::{
-        Command, StandardStatusCode,
+        Command, Response, StandardStatusCode,
         base::{
             BaseDiscoverImplementationVersionResponse, BaseNotifyErrorsResponse,
             BaseResetAgentConfigurationResponse, BaseSetDevicePermissionResponse,
@@ -505,7 +505,7 @@ mod tests {
     };
     use alloc::vec::Vec;
     use core::any::type_name;
-    use zerocopy::{FromBytes, IntoBytes};
+    use zerocopy::IntoBytes;
 
     struct MockCall {
         request_type: &'static str,
@@ -520,7 +520,7 @@ mod tests {
                 request_type: type_name::<C>(),
                 request: command.as_bytes().to_vec(),
                 response_type: type_name::<C::Response>(),
-                response: response.map(|r| r.as_bytes().to_vec()),
+                response: response.map(|r| r.as_bytes().unwrap().to_vec()),
             }
         }
 
@@ -535,7 +535,10 @@ mod tests {
             match &self.response {
                 Ok(response) => {
                     let bytes = response.as_bytes();
-                    Ok(C::Response::read_from_bytes(bytes).unwrap())
+                    C::Response::from_reader(|buffer| {
+                        buffer[0..bytes.len()].copy_from_slice(bytes);
+                        bytes.len()
+                    })
                 }
                 Err(error) => Err(*error),
             }
