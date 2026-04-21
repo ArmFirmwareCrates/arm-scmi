@@ -299,7 +299,7 @@ impl<'a> OwnedChannel<'a> {
             .ok_or(Error::LengthOverflow)?;
 
         if length as usize > self.memory.max_payload_length()
-            || (length as usize) != size_of::<C::Response>()
+            || (length as usize) != size_of::<ResponseWithStatus<C::Response>>()
         {
             return Err(Error::PayloadExceedsMaxSize);
         }
@@ -384,7 +384,7 @@ impl<D: Doorbell> Transport for SharedMemoryTransport<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{VendorSpecificProtocolId, Version, base};
+    use crate::protocol::{VendorSpecificProtocolId, Version, base, system_power};
 
     struct HookDoorbell<'a, F: FnMut(&mut [u32])> {
         hook: F,
@@ -457,7 +457,7 @@ mod tests {
             assert_eq!((0x10 << 10), buffer[Harness::MSG_HEADER_OFFSET]);
 
             buffer[Harness::CHANNEL_STATUS_OFFSET] = 0x1;
-            buffer[Harness::LENGTH_OFFSET] = 0x8;
+            buffer[Harness::LENGTH_OFFSET] = 0xc;
             buffer[Harness::MSG_PAYLOAD_OFFSET] = 0;
             buffer[Harness::MSG_PAYLOAD_OFFSET + 1] = 0x1234_5678;
         });
@@ -482,10 +482,9 @@ mod tests {
         }
 
         let mut transport = harness.create_transport(|_buffer| {});
-        assert!(
-            transport
-                .invoke_command(LongCommand { buffer: [0; 32] })
-                .is_err()
+        assert_eq!(
+            Err(Error::PayloadExceedsMaxSize),
+            transport.invoke_command(LongCommand { buffer: [0; 32] })
         );
     }
 
@@ -496,9 +495,44 @@ mod tests {
         let mut transport = harness.create_transport(|buffer| {
             buffer[Harness::CHANNEL_STATUS_OFFSET] = 0x1;
             buffer[Harness::LENGTH_OFFSET] = 0xffff_ffff;
-            buffer[Harness::MSG_HEADER_OFFSET] = (0x10 << 10) | (1 << 8);
         });
-        assert!(transport.invoke_command(base::ProtocolVersion {}).is_err());
+        assert_eq!(
+            Err(Error::PayloadExceedsMaxSize),
+            transport.invoke_command(base::ProtocolVersion {})
+        );
+    }
+
+    #[test]
+    fn invalid_response_id() {
+        let mut harness = Harness::new();
+
+        let mut transport = harness.create_transport(|buffer| {
+            buffer[Harness::CHANNEL_STATUS_OFFSET] = 0x1;
+            buffer[Harness::LENGTH_OFFSET] = 0xc;
+            buffer[Harness::MSG_HEADER_OFFSET] = 0x12 << 10; // Unexpected ID
+        });
+
+        assert_eq!(
+            Err(Error::UnexpectedResponse(MessageId::SystemPowerManagement(
+                system_power::SystemPowerCommandMessageId::ProtocolVersion
+            ))),
+            transport.invoke_command(base::ProtocolVersion {})
+        );
+    }
+
+    #[test]
+    fn invalid_token() {
+        let mut harness = Harness::new();
+
+        let mut transport = harness.create_transport(|buffer| {
+            buffer[Harness::CHANNEL_STATUS_OFFSET] = 0x1;
+            buffer[Harness::LENGTH_OFFSET] = 0xc;
+            buffer[Harness::MSG_HEADER_OFFSET] |= 0xab << 18; // Set token
+        });
+        assert_eq!(
+            Err(Error::UnexpectedToken(0xab)),
+            transport.invoke_command(base::ProtocolVersion {})
+        );
     }
 
     #[test]
@@ -507,10 +541,13 @@ mod tests {
 
         let mut transport = harness.create_transport(|buffer| {
             buffer[Harness::CHANNEL_STATUS_OFFSET] = 0x1;
-            buffer[Harness::LENGTH_OFFSET] = 0x8;
+            buffer[Harness::LENGTH_OFFSET] = 0xc;
             buffer[Harness::MSG_HEADER_OFFSET] = (0x11 << 10) | (1 << 8);
         });
-        assert!(transport.invoke_command(base::ProtocolVersion {}).is_err());
+        assert_eq!(
+            Err(Error::InvalidMessageType(1)),
+            transport.invoke_command(base::ProtocolVersion {})
+        );
     }
 
     #[test]
@@ -519,11 +556,16 @@ mod tests {
 
         let mut transport = harness.create_transport(|buffer| {
             buffer[Harness::CHANNEL_STATUS_OFFSET] = 0x1;
-            buffer[Harness::LENGTH_OFFSET] = 0x8;
+            buffer[Harness::LENGTH_OFFSET] = 0xc;
             buffer[Harness::MSG_PAYLOAD_OFFSET] = 0xffff_ffff;
             buffer[Harness::MSG_PAYLOAD_OFFSET + 1] = 0x1234_5678;
         });
-        assert!(transport.invoke_command(base::ProtocolVersion {}).is_err());
+        assert_eq!(
+            Err(Error::Status(StatusCode::Standard(
+                StandardStatusCode::NotSupported
+            ))),
+            transport.invoke_command(base::ProtocolVersion {})
+        );
     }
 
     #[test]
@@ -532,10 +574,13 @@ mod tests {
 
         let mut transport = harness.create_transport(|buffer| {
             buffer[Harness::CHANNEL_STATUS_OFFSET] = 0x3;
-            buffer[Harness::LENGTH_OFFSET] = 0x8;
+            buffer[Harness::LENGTH_OFFSET] = 0xc;
             buffer[Harness::MSG_PAYLOAD_OFFSET] = 0;
             buffer[Harness::MSG_PAYLOAD_OFFSET + 1] = 0x1234_5678;
         });
-        assert!(transport.invoke_command(base::ProtocolVersion {}).is_err());
+        assert_eq!(
+            Err(Error::ChannelError),
+            transport.invoke_command(base::ProtocolVersion {})
+        );
     }
 }
