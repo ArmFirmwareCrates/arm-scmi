@@ -393,7 +393,19 @@ fn get_ascii_string(slice: &[u8]) -> Option<&str> {
 /// Protocol version type.
 ///
 /// Commonly used in `*_PROTOCOL_VERSION` and `*_NEGOTIATE_PROTOCOL_VERSION` commands.
-#[derive(Clone, Debug, Default, PartialEq, Eq, FromBytes, Immutable, IntoBytes, KnownLayout)]
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    FromBytes,
+    Immutable,
+    IntoBytes,
+    KnownLayout,
+    PartialOrd,
+    Ord,
+)]
 #[repr(transparent)]
 pub struct Version(u32);
 
