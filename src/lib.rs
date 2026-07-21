@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: Copyright The arm-scmi Contributors.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![doc = include_str!("../README.md")]
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(unsafe_op_in_unsafe_fn)]
-
-#[cfg(test)]
-extern crate alloc;
 
 /// Common protocol elements.
 pub mod protocol;
@@ -503,7 +500,6 @@ mod tests {
             SystemPowerStateNotifyResponse, SystemPowerStateSetResponse,
         },
     };
-    use alloc::vec::Vec;
     use core::any::type_name;
     use zerocopy::IntoBytes;
 
