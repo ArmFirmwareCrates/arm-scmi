@@ -419,21 +419,39 @@ mod tests {
     use crate::protocol::{
         FixedSizedResponse, VendorSpecificProtocolId, Version, base, system_power,
     };
+    use core::{marker::PhantomData, slice};
 
     struct HookDoorbell<'a, F: FnMut(&mut [u32])> {
         hook: F,
-        buffer: &'a mut [u32],
+        buffer: NonNull<u32>,
+        buffer_len: usize,
+        _marker: PhantomData<&'a mut [u32]>,
     }
 
     impl<'a, F: FnMut(&mut [u32])> HookDoorbell<'a, F> {
-        pub fn new(hook: F, buffer: &'a mut [u32]) -> Self {
-            Self { hook, buffer }
+        /// Creates new instance using the pointer of the shared memory and its length measured in
+        /// the number of u32 items.
+        ///
+        /// # Safety
+        ///
+        /// The caller must ensure that `buffer` is a valid pointer and there is no concurrent
+        /// access to it when `ring()` is called.
+        pub unsafe fn new(hook: F, buffer: NonNull<u32>, buffer_len: usize) -> Self {
+            Self {
+                hook,
+                buffer,
+                buffer_len,
+                _marker: PhantomData,
+            }
         }
     }
 
     impl<'a, F: FnMut(&mut [u32])> Doorbell for HookDoorbell<'a, F> {
         fn ring(&mut self) {
-            (self.hook)(self.buffer);
+            // Safety: HookDoorbell is constructed from the harness buffer pointer, which is
+            // valid for buffer_len u32 words.
+            let buf = unsafe { slice::from_raw_parts_mut(self.buffer.as_ptr(), self.buffer_len) };
+            (self.hook)(buf);
         }
     }
 
@@ -449,7 +467,7 @@ mod tests {
         pub const MSG_HEADER_OFFSET: usize = 6;
         pub const MSG_PAYLOAD_OFFSET: usize = 7;
 
-        /// Create new instance.
+        /// Creates new instance.
         pub fn new() -> Self {
             Self {
                 buffer: [0; Self::WORD_COUNT],
@@ -461,17 +479,16 @@ mod tests {
             &mut self,
             hook: F,
         ) -> SharedMemoryTransport<HookDoorbell<'_, F>> {
-            // Safety: The pointer is valid and points to self.buffer. buffer is also passed to
-            // HookDoorbell, but it is only accessed when the transport layer rings the doorbell.
-            // There is no concurrent accesses to the memory.
-            let memory = unsafe {
-                SharedMemory::new(
-                    NonNull::new(self.buffer.as_mut_ptr()).unwrap(),
-                    Self::WORD_COUNT * 4,
-                )
-            };
+            let buffer = NonNull::from_mut(&mut self.buffer).cast();
 
-            SharedMemoryTransport::new(memory, HookDoorbell::new(hook, &mut self.buffer))
+            // Safety: The pointer is valid and points to self.buffer. HookDoorbell receives the
+            // same raw pointer, but does not create references to the shared memory.
+            let memory = unsafe { SharedMemory::new(buffer, size_of_val(&self.buffer)) };
+
+            // Safety: The pointer is valid and the transport does not access the buffer when
+            // calling ring().
+            let doorbell = unsafe { HookDoorbell::new(hook, buffer, Self::WORD_COUNT) };
+            SharedMemoryTransport::new(memory, doorbell)
         }
     }
 
