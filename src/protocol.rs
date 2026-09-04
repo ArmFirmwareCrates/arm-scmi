@@ -313,10 +313,10 @@ macro_rules! define_command {
 
         impl $crate::protocol::Command for $command {
             const ID: $crate::protocol::MessageId = $msg_id;
-            type Response = paste::paste!{ [<$command Response>] };
+            type Response = pastey::paste!{ [<$command Response>] };
         }
 
-        paste::paste! {
+        pastey::paste! {
             #[doc = "`"]
             #[doc = $name]
             #[doc = "` command response."]
