@@ -3,11 +3,7 @@
 
 [package]
 name = "arm-scmi"
-version = "0.1.0"
-authors = [
-    "Imre Kis <imre.kis@arm.com>",
-    "Ludovic Mermod <ludovic.mermod@arm.com>"
-]
+version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Arm System Control and Management Interface driver"
