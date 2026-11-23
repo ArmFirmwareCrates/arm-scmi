@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Bugfixes
+
+- Add AArch64 memory barriers to order shared memory command writes, doorbell accesses, and response
+  reads.
+
 ## 0.2.0
 
 ### Breaking changes

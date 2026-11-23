@@ -399,7 +399,13 @@ impl<D: Doorbell> Transport for SharedMemoryTransport<D> {
     fn invoke_command<C: Command>(&mut self, command: C) -> Result<C::Response, Error> {
         self.acquire_channel().write_command(command)?;
 
+        // Ensure that the command is written to the shared memory before ringing the doorbell.
+        dmb_st();
+
         self.doorbell.ring();
+
+        // Order memory accesses performed by the ring hook before channel status reads.
+        dmb_sy();
 
         // Busy-waiting until the channel becomes free.
         let mut channel = self.acquire_channel();
@@ -409,7 +415,40 @@ impl<D: Doorbell> Transport for SharedMemoryTransport<D> {
             return Err(Error::ChannelError);
         }
 
+        // Ensure that any read to the shared memory is done on a successfully acquired channel.
+        dmb_ld();
+
         channel.read_response::<C>()
+    }
+}
+
+/// Data memory barrier for store operations.
+fn dmb_st() {
+    #[cfg(all(target_arch = "aarch64", not(test)))]
+    // SAFETY: DMB only orders memory accesses, it does not access memory itself or modify
+    // registers, flags, or the stack.
+    unsafe {
+        core::arch::asm!("dmb st", options(nostack, preserves_flags));
+    }
+}
+
+/// Data memory barrier for load operations.
+fn dmb_ld() {
+    #[cfg(all(target_arch = "aarch64", not(test)))]
+    // SAFETY: DMB only orders memory accesses, it does not access memory itself or modify
+    // registers, flags, or the stack.
+    unsafe {
+        core::arch::asm!("dmb ld", options(nostack, preserves_flags));
+    }
+}
+
+/// Data memory barrier for both load and store operations.
+fn dmb_sy() {
+    #[cfg(all(target_arch = "aarch64", not(test)))]
+    // SAFETY: DMB only orders memory accesses, it does not access memory itself or modify
+    // registers, flags, or the stack.
+    unsafe {
+        core::arch::asm!("dmb sy", options(nostack, preserves_flags));
     }
 }
 
